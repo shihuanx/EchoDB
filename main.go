@@ -53,7 +53,13 @@ func main() {
 		time.Sleep(10 * time.Second)
 		log.Printf("节点：%s 等待领导者选举完成", cfg.Node.NodeId)
 	}
-	leaderPortAddr, err := studentService.GetLeaderPortAddr()
+	leaderPortAddr, err, fatalNode := studentService.GetLeaderPortAddr()
+	if fatalNode != nil {
+		if err = studentService.DeleteFatalPeer(fatalNode); err != nil {
+			log.Printf("删除损坏节点：%s失败：%v", fatalNode.NodeId, err)
+			return
+		}
+	}
 	//定期清空缓存 定期清除内存中的过期键 让领导者节点提交命令给所有节点
 	if err != nil {
 		log.Fatalf("节点：%s 获取领导者端口地址失败：%v", cfg.Node.NodeId, err)
