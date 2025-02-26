@@ -103,6 +103,47 @@ func (ss *StudentService) UpdatePeersInternal(peer *config.Peer) {
 	}
 }
 
+func (ss *StudentService) HandleDeletePeerRequest(peerID string, peerAddr string, peerPortAddr string) error {
+	if ss.raftNode.State() == raftfpk.Leader {
+		fatalPeer := &config.Peer{
+			NodeId:      peerID,
+			Address:     peerAddr,
+			PortAddress: peerPortAddr,
+		}
+		future := ss.raftNode.RemoveServer(raftfpk.ServerID(peerID), 0, 0)
+		if err := future.Error(); err != nil {
+			return err
+		}
+		log.Printf("领导者节点已将节点：%s从集群中删除", peerID)
+		return ss.ApplyRaftCommandToLeader("deleteFatalPeer", nil, "", 0, fatalPeer)
+	}
+	return nil
+}
+
+func (ss *StudentService) DeleteFatalPeer(fatalNode *config.Peer) error {
+	leaderPortAddr, err, _ := ss.GetLeaderPortAddr()
+	if err != nil {
+		log.Printf("节点：%s 获取领导者端口地址失败：%v", ss.node.NodeId, err)
+	}
+	url := fmt.Sprintf("http://localhost:%s/DeleteFatalPeer?PeerID=%s&PeerAddress=%s&PeerPortAddress=%s", leaderPortAddr, fatalNode.NodeId, fatalNode.Address, fatalNode.PortAddress)
+	_, err = http.Get(url)
+	if err != nil {
+		log.Printf("StudentService.DeleteFatalPeer err:%v", err)
+		return fmt.Errorf("StudentService.DeleteFatalPeer err:%w", err)
+	}
+	return nil
+}
+
+func (ss *StudentService) DeleteFatalPeerInternal(fatalPeer *config.Peer) {
+	for i, peer := range ss.peers {
+		if peer.NodeId == fatalPeer.NodeId {
+			ss.peers = append(ss.peers[:i], ss.peers[i+1:]...)
+			log.Printf("节点：%s删除了Peer：%s", ss.node.NodeId, peer.NodeId)
+			return
+		}
+	}
+}
+
 // HandleGetLeaderPortAddressRequest 处理获取领导者地址的请求 返回领导者的端口号
 func (ss *StudentService) HandleGetLeaderPortAddressRequest() string {
 	if ss.raftNode.State() == raftfpk.Leader {
@@ -113,38 +154,53 @@ func (ss *StudentService) HandleGetLeaderPortAddressRequest() string {
 }
 
 // GetLeaderPortAddr 获取领导者端口地址 向集群的各个节点都发送一个http请求 如果他是领导者节点 他就会把自己的端口号返回过来
-func (ss *StudentService) GetLeaderPortAddr() (string, error) {
+func (ss *StudentService) GetLeaderPortAddr() (string, error, *config.Peer) {
+	fatalNode := &config.Peer{}
 	if ss.raftNode.State() == raftfpk.Leader {
-		return ss.node.PortAddress, nil
+		return ss.node.PortAddress, nil, nil
 	}
 	for _, node := range ss.peers {
 		url := fmt.Sprintf("http://localhost:%s/GetLeaderAddress", node.PortAddress)
 		resp, err := http.Get(url)
 		if err != nil {
-			log.Printf("请求出错：%v", err)
-			return "", err
+			if strings.Contains(err.Error(), "No connection could be made because the target machine actively refused it") {
+				log.Printf("检测到节点：%s端口：%s失效，将跳过这次操作 并在集群中广播删除该节点", node.NodeId, node.PortAddress)
+				fatalNode.NodeId = node.NodeId
+				fatalNode.Address = node.Address
+				fatalNode.PortAddress = node.PortAddress
+				continue
+			}
+			log.Printf("StudentService.GetLeaderPortAddr 请求出错：%v", err)
+			return "", fmt.Errorf("StudentService.GetLeaderPortAddr 请求出错：%w", err), fatalNode
 		}
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			log.Printf("读取响应体出错：%v", err)
-			return "", err
+			log.Printf("StudentService.GetLeaderPortAddr 读取响应体出错：%v", err)
+			return "", fmt.Errorf("StudentService.GetLeaderPortAddr 读取响应体出错：%w", err), fatalNode
 		}
+
+		// 检查响应体长度
+		if len(body) == 0 {
+			log.Printf("StudentService.GetLeaderPortAddr 响应体为空：%s", url)
+			continue
+		}
+
 		// 解析 JSON 响应
 		var result response.Result
 		err = json.Unmarshal(body, &result)
 		if err != nil {
-			fmt.Printf("解析 JSON 数据出错: %v\n", err)
-			return "", err
+			fmt.Printf("StudentService.GetLeaderPortAddr 解析 JSON 数据出错: %v\n", err)
+			return "", fmt.Errorf("StudentService.GetLeaderPortAddr 解析 JSON 数据出错: %w", err), fatalNode
 		}
 
 		// 提取 leaderAddr
 		leaderPortAddr, ok := result.Data.(string)
 		if ok {
-			return leaderPortAddr, nil
+			return leaderPortAddr, nil, fatalNode
 		}
-		return "", fmt.Errorf("领导者地址 类型断言失败")
+		return "", fmt.Errorf("StudentService.GetLeaderPortAddr 领导者地址 类型断言失败"), fatalNode
 	}
-	return "", fmt.Errorf("获取领导者地址失败")
+	return "", fmt.Errorf("StudentService.GetLeaderPortAddr 获取领导者地址失败"), fatalNode
 }
 
 // ApplyRaftCommandToLeader 将命令提交给领导者处理
@@ -178,7 +234,13 @@ func (ss *StudentService) ApplyRaftCommandToLeader(operation string, student *mo
 		return nil
 	} else {
 		//如果不是 那就找到领导者节点的端口 把命令交给领导者节点处理
-		leaderPortAddr, err := ss.GetLeaderPortAddr()
+		leaderPortAddr, err, fatalNode := ss.GetLeaderPortAddr()
+		if fatalNode != nil {
+			err := ss.DeleteFatalPeer(fatalNode)
+			if err != nil {
+				return err
+			}
+		}
 		if err != nil {
 			return fmt.Errorf("StudentService.ApplyRaftCommandToLeader 获取领导者地址失败：%w", err)
 		}
@@ -195,6 +257,7 @@ func (ss *StudentService) ApplyRaftCommandToLeader(operation string, student *mo
 			log.Printf("读取响应体出错：%v", err)
 			return err
 		}
+
 		// 解析 JSON 响应
 		var result response.Result
 		err = json.Unmarshal(body, &result)

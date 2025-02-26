@@ -72,12 +72,18 @@ func NewRaftNode(node config.Node, peers []*config.Peer, fsm raft.FSM, service i
 		}
 		log.Printf("节点 %s 集群初始化成功", node.NodeId)
 	} else {
-		log.Printf("节点 %s 尝试加入现有集群，等待选举完成...", node.NodeId)
+		log.Printf("节点 %s 尝试加入现有集群", node.NodeId)
 
-		leaderPortAddr, err := service.GetLeaderPortAddr()
+		leaderPortAddr, err, fatalNode := service.GetLeaderPortAddr()
 		if err != nil {
 			log.Printf("节点：%s获取leader地址失败：%v", node.NodeId, err)
 			return nil, fmt.Errorf("节点：%s获取leader地址失败：%w", node.NodeId, err)
+		}
+		if fatalNode != nil {
+			if err = service.DeleteFatalPeer(fatalNode); err != nil {
+				log.Printf("删除损坏节点：%s失败：%v", fatalNode.NodeId, err)
+				return nil, fmt.Errorf("删除损坏节点：%s失败：%v", fatalNode.NodeId, err)
+			}
 		}
 
 		url := fmt.Sprintf("http://localhost:%s/JoinRaftCluster?nodeID=%s&nodeAddress=%s&portAddress=%s", leaderPortAddr, node.NodeId, node.Address, node.PortAddress)

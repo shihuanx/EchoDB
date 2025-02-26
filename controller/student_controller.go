@@ -117,3 +117,15 @@ func (sc *StudentController) GetLeaderPortAddress(c *gin.Context) {
 		c.JSON(http.StatusOK, response.Success(leaderAddr))
 	}
 }
+
+func (sc *StudentController) DeleteFatalPeer(c *gin.Context) {
+	peerID := c.Query("PeerID")
+	peerAddr := c.Query("PeerAddress")
+	peerPortAddr := c.Query("PeerPortAddress")
+	if err := sc.studentService.HandleDeletePeerRequest(peerID, peerAddr, peerPortAddr); err != nil {
+		log.Printf("StudentController.DeleteFatalPeer err:%v", err)
+		c.JSON(500, response.Error(err.Error()))
+	} else {
+		c.JSON(http.StatusOK, response.SuccessWithoutData())
+	}
+}
