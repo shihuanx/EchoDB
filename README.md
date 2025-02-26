@@ -1,6 +1,7 @@
 项目总体使用了controller service dao层三层架构实现了一个分布式内存数据库 内存数据库用了map集合 线程模型采用读写互斥锁
 
 使用Raft一致性协议保证了各个节点数据一致 节点间通过TCP通信 将Raft节点添加到集群通过Gin框架实现 已经实现了自动寻找领导者节点 并把命令提交给他
+实现了多端口 多线程部署 但是领导者挂了后还是有点问题 没选新的领导者 问题是节点的配置信息不稳定 放弃了选举
 
 项目实现了学生的增删改查业务 并且用了内存数据库 redis mysql三级缓存 实现了按照内存-缓存-mysql的顺序查找学生 添加、修改、删除通过mysql事务、redis备份避免了出现异常导致的数据不一致
 
@@ -17,18 +18,6 @@
 
 添加学生：POST localhost:8080/student 
 参数：json形式 id：string类型，name：string类型，class：string类型，gender：string类型 grades：map[string]float64 expiration:过期时间 默认是0 即永久保存 
-{
-    "id":"1",
-    "name":"wwww",
-    "class":"1",
-    "gender":"1",
-    "grades":{
-        "Math":91.1,
-        "English":20.4,
-        "Chinese":20
-    },
-    "expiration":10
-}
 
 修改学生: PUT localhost:8080/student
 参数：json形式 id：string类型 必填 其他的name，class，gender，grades选填 不填就不修改
