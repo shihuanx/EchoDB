@@ -1,73 +1,97 @@
-package fsm
+package node
 
 import (
-	"encoding/json"
 	"fmt"
-	"github.com/hashicorp/raft"
-	"io"
+	"log"
 	"memoryDataBase/config"
 	"memoryDataBase/interfaces"
-	"memoryDataBase/model"
+	"net/http"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/hashicorp/raft"
 )
 
-// StudentCommand 定义 Node 日志条目的结构
-type StudentCommand struct {
-	Operation   string         `json:"operation"`
-	Student     *model.Student `json:"student,omitempty"`
-	Id          string         `json:"id"`
-	ExamineSize int            `json:"examine_size"`
-	Peer        *config.Peer
-}
+// NewRaftNode 创建并启动 Raft 节点
+func NewRaftNode(node config.Node, peers []*config.Peer, fsm raft.FSM, service interfaces.StudentServiceInterface) (*raft.Raft, error) {
+	log.Printf("开始创建 Raft 节点: NodeID=%s, Address=%s", node.NodeId, node.Address)
 
-// StudentFSM 实现 raft.FSM 接口
-type StudentFSM struct {
-	service interfaces.StudentServiceInterface
-}
+	// 配置 Raft
+	raftConfig := raft.DefaultConfig()
+	raftConfig.LocalID = raft.ServerID(node.NodeId)
+	raftConfig.SnapshotInterval = 120 * time.Second
+	raftConfig.SnapshotThreshold = 1024
 
-// NewStudentFSM 创建一个新的 StudentFSM 实例
-func NewStudentFSM(service interfaces.StudentServiceInterface) *StudentFSM {
-	return &StudentFSM{
-		service: service,
+	// 初始化存储
+	logStore := raft.NewInmemStore()
+	stableStore := raft.NewInmemStore()
+
+	// 为每个节点创建独立的快照目录
+	snapshotDir := filepath.Join("snapshots", node.NodeId)
+	if err := os.MkdirAll(snapshotDir, 0755); err != nil {
+		return nil, fmt.Errorf("创建快照目录失败: NodeID=%s, Directory=%s, Error=%w", node.NodeId, snapshotDir, err)
 	}
-}
-
-// Apply 应用日志条目到状态机
-func (fsm *StudentFSM) Apply(log *raft.Log) interface{} {
-	var cmd StudentCommand
-	if err := json.Unmarshal(log.Data, &cmd); err != nil {
-		return fmt.Errorf("fsm.Apply unmarshal cmd fail: %s", err)
+	snapshotStore, err := raft.NewFileSnapshotStore(snapshotDir, 3, os.Stderr)
+	if err != nil {
+		return nil, fmt.Errorf("创建快照存储失败: NodeID=%s, Error=%w", node.NodeId, err)
 	}
-	switch cmd.Operation {
-	case "add":
-		return fsm.service.AddStudentInternal(cmd.Student)
-	case "update":
-		return fsm.service.UpdateStudentInternal(cmd.Student)
-	case "delete":
-		return fsm.service.DeleteStudentInternal(cmd.Id)
-	case "reloadCacheData":
-		fsm.service.ReLoadCacheDataInternal()
-		return nil
-	case "periodicDelete":
-		fsm.service.PeriodicDeleteInternal(cmd.ExamineSize)
-		return nil
-	case "updatePeers":
-		fsm.service.UpdatePeersInternal(cmd.Peer)
-		return nil
-	case "deleteFatalPeer":
-		fsm.service.DeleteFatalPeerInternal(cmd.Peer)
-		return nil
-	default:
-		return fmt.Errorf("fsm.Apply unknown operation: %s", cmd.Operation)
+
+	// 初始化传输层 通过TCP传输
+	transport, err := raft.NewTCPTransport(node.Address, nil, 3, 10*time.Second, os.Stderr)
+	if err != nil {
+		log.Printf("创建 Raft 传输层失败: NodeID=%s Address=%s Error=%v", node.NodeId, node.Address, err)
+		return nil, err
 	}
-}
+	if transport == nil {
+		log.Printf("创建 Raft 传输层返回 nil: NodeID=%s Address=%s", node.NodeId, node.Address)
+		return nil, fmt.Errorf("创建 Raft 传输层返回 nil")
+	}
+	log.Printf("创建 Raft 传输层成功: NodeID=%s Address=%s transport=%v", node.NodeId, node.Address, transport)
 
-// Snapshot 实现快照功能
-func (fsm *StudentFSM) Snapshot() (raft.FSMSnapshot, error) {
-	return nil, nil
-}
+	// 创建 Raft 实例
+	r, err := raft.NewRaft(raftConfig, fsm, logStore, stableStore, snapshotStore, transport)
+	if err != nil {
+		return nil, fmt.Errorf("创建 Raft 实例失败: NodeID：%s, Error：%w", node.NodeId, err)
+	}
 
-// Restore 恢复状态机到快照状态
-func (fsm *StudentFSM) Restore(snapshot io.ReadCloser) error {
-	defer snapshot.Close()
-	return nil
+	// 如果是第一个节点，初始化集群
+	if len(peers) == 0 {
+		log.Printf("节点 %s 是第一个节点，开始初始化集群", node.NodeId)
+		configuration := raft.Configuration{
+			Servers: []raft.Server{
+				{
+					ID:      raft.ServerID(node.NodeId),
+					Address: raft.ServerAddress(node.Address),
+				},
+			},
+		}
+		future := r.BootstrapCluster(configuration)
+		if err := future.Error(); err != nil {
+			return nil, fmt.Errorf("节点 %s 初始化集群失败: %w", node.NodeId, err)
+		}
+		log.Printf("节点 %s 集群初始化成功", node.NodeId)
+	} else {
+		log.Printf("节点 %s 尝试加入现有集群", node.NodeId)
+
+		leaderPortAddr, err, fatalNode := service.GetLeaderPortAddr()
+		if err != nil {
+			log.Printf("节点：%s获取leader地址失败：%v", node.NodeId, err)
+			return nil, fmt.Errorf("节点：%s获取leader地址失败：%w", node.NodeId, err)
+		}
+		if fatalNode != nil {
+			if err = service.DeleteFatalPeer(fatalNode); err != nil {
+				log.Printf("删除损坏节点：%s失败：%v", fatalNode.NodeId, err)
+				return nil, fmt.Errorf("删除损坏节点：%s失败：%v", fatalNode.NodeId, err)
+			}
+		}
+
+		url := fmt.Sprintf("http://localhost:%s/JoinRaftCluster?nodeID=%s&nodeAddress=%s&portAddress=%s", leaderPortAddr, node.NodeId, node.Address, node.PortAddress)
+		_, err = http.Get(url)
+		if err != nil {
+			log.Printf("节点：%s加入集群失败：%v", node.NodeId, err)
+			return nil, fmt.Errorf("节点：%s加入集群失败：%w", node.NodeId, err)
+		}
+	}
+	return r, nil
 }
