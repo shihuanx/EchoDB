@@ -53,6 +53,9 @@ func (fsm *StudentFSM) Apply(log *raft.Log) interface{} {
 	case "updatePeers":
 		fsm.service.UpdatePeersInternal(cmd.Peer)
 		return nil
+	case "deleteFatalPeer":
+		fsm.service.DeleteFatalPeerInternal(cmd.Peer)
+		return nil
 	default:
 		return fmt.Errorf("fsm.Apply unknown operation: %s", cmd.Operation)
 	}
