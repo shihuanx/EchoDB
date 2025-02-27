@@ -85,6 +85,7 @@ func (ss *StudentService) JoinRaftCluster(nodeID string, nodeAddress string, nod
 		newPeer.Address = nodeAddress
 		newPeer.PortAddress = nodePortAddress
 
+		//更新所有节点的Peers
 		err := ss.ApplyRaftCommandToLeader("updatePeers", nil, "", 0, newPeer)
 		if err != nil {
 			log.Printf("领导者节点更新所有节点的Peers失败：%v", err)
@@ -96,6 +97,7 @@ func (ss *StudentService) JoinRaftCluster(nodeID string, nodeAddress string, nod
 	return nil
 }
 
+// UpdatePeersInternal 更新Peers
 func (ss *StudentService) UpdatePeersInternal(peer *config.Peer) {
 	if ss.node.NodeId != peer.NodeId {
 		ss.peers = append(ss.peers, peer)
@@ -103,23 +105,8 @@ func (ss *StudentService) UpdatePeersInternal(peer *config.Peer) {
 	}
 }
 
-func (ss *StudentService) HandleDeletePeerRequest(peerID string, peerAddr string, peerPortAddr string) error {
-	if ss.raftNode.State() == raftfpk.Leader {
-		fatalPeer := &config.Peer{
-			NodeId:      peerID,
-			Address:     peerAddr,
-			PortAddress: peerPortAddr,
-		}
-		future := ss.raftNode.RemoveServer(raftfpk.ServerID(peerID), 0, 0)
-		if err := future.Error(); err != nil {
-			return err
-		}
-		log.Printf("领导者节点已将节点：%s从集群中删除", peerID)
-		return ss.ApplyRaftCommandToLeader("deleteFatalPeer", nil, "", 0, fatalPeer)
-	}
-	return nil
-}
-
+// DeleteFatalPeer  在遍历寻找领导者地址时，如果发现他的http端口坏了，就会调用这个方法 向领导者节点发送http请求删除集群中的错误节点
+// 领导者删除完集群里的节点后 会发布命令让每个节点删除错误peer
 func (ss *StudentService) DeleteFatalPeer(fatalNode *config.Peer) error {
 	leaderPortAddr, err, _ := ss.GetLeaderPortAddr()
 	if err != nil {
@@ -134,6 +121,28 @@ func (ss *StudentService) DeleteFatalPeer(fatalNode *config.Peer) error {
 	return nil
 }
 
+// HandleDeletePeerRequest 处理删除Peer的请求
+func (ss *StudentService) HandleDeletePeerRequest(peerID string, peerAddr string, peerPortAddr string) error {
+	if ss.raftNode.State() == raftfpk.Leader {
+		fatalPeer := &config.Peer{
+			NodeId:      peerID,
+			Address:     peerAddr,
+			PortAddress: peerPortAddr,
+		}
+		future := ss.raftNode.RemoveServer(raftfpk.ServerID(peerID), 0, 0)
+		if err := future.Error(); err != nil {
+			return err
+		}
+		if fatalPeer != nil {
+			log.Printf("领导者节点已将节点：%s从集群中删除", peerID)
+			return ss.ApplyRaftCommandToLeader("deleteFatalPeer", nil, "", 0, fatalPeer)
+		}
+		return nil
+	}
+	return nil
+}
+
+// DeleteFatalPeerInternal 删除错误Peer
 func (ss *StudentService) DeleteFatalPeerInternal(fatalPeer *config.Peer) {
 	for i, peer := range ss.peers {
 		if peer.NodeId == fatalPeer.NodeId {
@@ -142,15 +151,6 @@ func (ss *StudentService) DeleteFatalPeerInternal(fatalPeer *config.Peer) {
 			return
 		}
 	}
-}
-
-// HandleGetLeaderPortAddressRequest 处理获取领导者地址的请求 返回领导者的端口号
-func (ss *StudentService) HandleGetLeaderPortAddressRequest() string {
-	if ss.raftNode.State() == raftfpk.Leader {
-		log.Printf("节点：%s是领导者节点", ss.node.NodeId)
-		return ss.node.PortAddress
-	}
-	return ""
 }
 
 // GetLeaderPortAddr 获取领导者端口地址 向集群的各个节点都发送一个http请求 如果他是领导者节点 他就会把自己的端口号返回过来
@@ -200,7 +200,16 @@ func (ss *StudentService) GetLeaderPortAddr() (string, error, *config.Peer) {
 		}
 		return "", fmt.Errorf("StudentService.GetLeaderPortAddr 领导者地址 类型断言失败"), fatalNode
 	}
-	return "", fmt.Errorf("StudentService.GetLeaderPortAddr 获取领导者地址失败"), fatalNode
+	return "", fmt.Errorf("StudentService.GetLeaderPortAddr 遍历结束仍没有找到领导者"), fatalNode
+}
+
+// HandleGetLeaderPortAddressRequest 处理获取领导者地址的请求 返回领导者的端口号
+func (ss *StudentService) HandleGetLeaderPortAddressRequest() string {
+	if ss.raftNode.State() == raftfpk.Leader {
+		log.Printf("节点：%s是领导者节点", ss.node.NodeId)
+		return ss.node.PortAddress
+	}
+	return ""
 }
 
 // ApplyRaftCommandToLeader 将命令提交给领导者处理
