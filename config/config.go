@@ -18,30 +18,30 @@ type RedisConfig struct {
 
 // MemoryDBConfig 定义内存数据库配置结构体
 type MemoryDBConfig struct {
-	Capacity   int
-	EvictRatio float64
+	Capacity   int     //内存容量
+	EvictRatio float64 //触发内存淘汰时淘汰的键的比例
 }
 
 // CachePreheatingConfig 定义缓存预热配置结构体
 type CachePreheatingConfig struct {
-	LoadRatio float64
+	LoadRatio float64 //加载到内存中的数据量占内存容量的比例
 }
 
 // ServerConfig 定义服务器配置结构体
 type ServerConfig struct {
-	ReloadInterval         time.Duration
-	PeriodicDeleteInterval time.Duration
-	ExamineSize            int
+	ReloadInterval         time.Duration //重载缓存的时间间隔
+	PeriodicDeleteInterval time.Duration //过期删除的时间间隔
+	ExamineSize            int           //过期删除时检测的键的数量
 }
 
-// Node 定义节点信息结构体
+// Node 定义当前节点信息结构体
 type Node struct {
 	NodeId      string
 	Address     string
 	PortAddress string
 }
 
-// Peer 表示集群中其他单个节点的信息
+// Peer 表示集群中其他单个节点的信息 在加入集群时要包含集群中的所有其他节点
 type Peer struct {
 	NodeId      string
 	Address     string
