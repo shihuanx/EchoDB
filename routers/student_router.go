@@ -19,7 +19,7 @@ func SetUpStudentRouter(studentController *controller.StudentController) *gin.En
 
 	r.GET("/LeaderHandleCommand", studentController.LeaderHandleCommand)
 
-	r.GET("/GetLeaderAddress", studentController.GetLeaderPortAddress)
+	r.GET("/GetLeaderPortAddress", studentController.GetLeaderPortAddress)
 
 	r.GET("/DeleteFatalPeer", studentController.DeleteFatalPeer)
 

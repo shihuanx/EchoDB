@@ -41,13 +41,6 @@ type Node struct {
 	PortAddress string
 }
 
-// Peer 表示集群中其他单个节点的信息 在加入集群时要包含集群中的所有其他节点
-type Peer struct {
-	NodeId      string
-	Address     string
-	PortAddress string
-}
-
 // Config 定义配置结构体
 type Config struct {
 	MySQL           MySQLConfig
@@ -56,7 +49,6 @@ type Config struct {
 	CachePreheating CachePreheatingConfig
 	Server          ServerConfig
 	Node            Node
-	Peers           []*Peer
 }
 
 // GetConfig 获取配置实例
@@ -90,6 +82,5 @@ func GetConfig() Config {
 			Address:     "127.0.0.1:8080",
 			PortAddress: "8080",
 		},
-		Peers: []*Peer{},
 	}
 }

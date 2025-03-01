@@ -88,9 +88,8 @@ func (sc *StudentController) DeleteStudent(c *gin.Context) {
 func (sc *StudentController) JoinRaftCluster(c *gin.Context) {
 	nodeID := c.Query("nodeID")
 	nodeAddress := c.Query("nodeAddress")
-	nodePortAddress := c.Query("portAddress")
-	if err := sc.studentService.JoinRaftCluster(nodeID, nodeAddress, nodePortAddress); err != nil {
-		log.Printf("StudentController.JoinRaftCluster err:%v", err)
+	if err := sc.studentService.HandleJoinRaftClusterRequest(nodeID, nodeAddress); err != nil {
+		log.Printf("StudentController.HandleJoinRaftClusterRequest err:%v", err)
 		c.JSON(500, response.Error(err.Error()))
 	} else {
 		log.Printf("添加节点：%s成功", nodeID)
@@ -112,17 +111,16 @@ func (sc *StudentController) LeaderHandleCommand(c *gin.Context) {
 
 // GetLeaderPortAddress 获取领导者端口的地址 方法是向所有节点都通过此端口发送请求 领导者端口会返回自己的端口地址
 func (sc *StudentController) GetLeaderPortAddress(c *gin.Context) {
-	leaderAddr := sc.studentService.HandleGetLeaderPortAddressRequest()
-	if leaderAddr != "" {
-		c.JSON(http.StatusOK, response.Success(leaderAddr))
+	leaderPortAddress := sc.studentService.HandleGetLeaderPortAddressRequest()
+	if leaderPortAddress != "" {
+		c.JSON(http.StatusOK, response.Success(leaderPortAddress))
 	}
 }
 
+// DeleteFatalPeer 处理删除集群中损坏节点的请求 领导者节点会收到这个请求
 func (sc *StudentController) DeleteFatalPeer(c *gin.Context) {
 	peerID := c.Query("PeerID")
-	peerAddr := c.Query("PeerAddress")
-	peerPortAddr := c.Query("PeerPortAddress")
-	if err := sc.studentService.HandleDeletePeerRequest(peerID, peerAddr, peerPortAddr); err != nil {
+	if err := sc.studentService.HandleDeletePeerRequest(peerID); err != nil {
 		log.Printf("StudentController.DeleteFatalPeer err:%v", err)
 		c.JSON(500, response.Error(err.Error()))
 	} else {

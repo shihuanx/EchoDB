@@ -30,7 +30,7 @@ func main() {
 	studentCacheService := service.NewStudentCacheService(studentCacheDao)
 	studentMysqlService := service.NewStudentMysqlService(studentMysqlDao)
 	studentMdbService := service.NewStudentMdbService(memoryDBDao)
-	studentService, err := service.NewStudentService(studentMdbService, studentMysqlService, studentCacheService, cfg.Node, cfg.Peers)
+	studentService, err := service.NewStudentService(studentMdbService, studentMysqlService, studentCacheService, cfg.Node)
 	if err != nil {
 		log.Fatalf("节点：%s 初始化学生服务层失败：%v", cfg.Node.NodeId, err)
 	}
@@ -48,15 +48,14 @@ func main() {
 	}
 	log.Printf("节点：%s 加载缓存到内存", cfg.Node.NodeId)
 
-	//启动时等待10秒 第一个节点要等待领导者选举完成再获得地址
-	if cfg.Node.PortAddress == "8080" {
-		time.Sleep(10 * time.Second)
-		log.Printf("节点：%s 等待领导者选举完成", cfg.Node.NodeId)
-	}
-	leaderPortAddr, err, fatalNode := studentService.GetLeaderPortAddr()
-	if fatalNode != nil {
-		if err = studentService.DeleteFatalPeer(fatalNode); err != nil {
-			log.Printf("删除损坏节点：%s失败：%v", fatalNode.NodeId, err)
+	//启动时等待10秒 第一个节点要等待领导者选举完成再获得地址 后面的节点要等待加入集群
+	time.Sleep(10 * time.Second)
+	log.Printf("节点：%s 等待领导者选举完成", cfg.Node.NodeId)
+
+	leaderPortAddress, err, fatalNodeID := studentService.GetLeaderPortAddress()
+	if fatalNodeID != "" {
+		if err = studentService.DeleteFatalPeer(fatalNodeID); err != nil {
+			log.Printf("删除损坏节点：%s失败：%v", fatalNodeID, err)
 			return
 		}
 	}
@@ -65,14 +64,14 @@ func main() {
 		log.Fatalf("节点：%s 获取领导者端口地址失败：%v", cfg.Node.NodeId, err)
 	}
 	go func() {
-		if cfg.Node.PortAddress == leaderPortAddr {
+		if cfg.Node.PortAddress == leaderPortAddress {
 			studentService.ReLoadCacheData(cfg.Server.ReloadInterval)
 		}
 	}()
 
 	//定期删除内存数据库过期键
 	go func() {
-		if cfg.Node.PortAddress == leaderPortAddr {
+		if cfg.Node.PortAddress == leaderPortAddress {
 			studentService.PeriodicDelete(cfg.Server.PeriodicDeleteInterval, cfg.Server.ExamineSize)
 		}
 	}()

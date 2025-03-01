@@ -9,7 +9,7 @@ package routers
 //func SetUpRaftRouter(studentController *controller.StudentController) *gin.Engine {
 //	r := gin.Default()
 //
-//	r.GET("", studentController.JoinRaftCluster)
+//	r.GET("", studentController.HandleJoinRaftClusterRequest)
 //
 //	return r
 //}

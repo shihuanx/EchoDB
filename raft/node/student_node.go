@@ -14,7 +14,7 @@ import (
 )
 
 // NewRaftNode 创建并启动 Raft 节点
-func NewRaftNode(node config.Node, peers []*config.Peer, fsm raft.FSM, service interfaces.StudentServiceInterface) (*raft.Raft, error) {
+func NewRaftNode(node config.Node, fsm raft.FSM, service interfaces.StudentServiceInterface) (*raft.Raft, error) {
 	log.Printf("开始创建 Raft 节点: NodeID=%s, Address=%s", node.NodeId, node.Address)
 
 	// 配置 Raft
@@ -56,7 +56,7 @@ func NewRaftNode(node config.Node, peers []*config.Peer, fsm raft.FSM, service i
 	}
 
 	// 如果是第一个节点，初始化集群
-	if len(peers) == 0 {
+	if node.PortAddress == "8080" {
 		log.Printf("节点 %s 是第一个节点，开始初始化集群", node.NodeId)
 		configuration := raft.Configuration{
 			Servers: []raft.Server{
@@ -73,20 +73,9 @@ func NewRaftNode(node config.Node, peers []*config.Peer, fsm raft.FSM, service i
 		log.Printf("节点 %s 集群初始化成功", node.NodeId)
 	} else {
 		log.Printf("节点 %s 尝试加入现有集群=", node.NodeId)
-
-		leaderPortAddr, err, fatalNode := service.GetLeaderPortAddr()
-		if err != nil {
-			log.Printf("节点：%s获取leader地址失败：%v", node.NodeId, err)
-			return nil, fmt.Errorf("节点：%s获取leader地址失败：%w", node.NodeId, err)
-		}
-		if fatalNode != nil {
-			if err = service.DeleteFatalPeer(fatalNode); err != nil {
-				log.Printf("删除损坏节点：%s失败：%v", fatalNode.NodeId, err)
-				return nil, fmt.Errorf("删除损坏节点：%s失败：%v", fatalNode.NodeId, err)
-			}
-		}
-
-		url := fmt.Sprintf("http://localhost:%s/JoinRaftCluster?nodeID=%s&nodeAddress=%s&portAddress=%s", leaderPortAddr, node.NodeId, node.Address, node.PortAddress)
+		//因为现在删除了Peers 所以在启动的时候只能指定领导者地址了 因为这时候还没加入集群 无法通过GetConfiguration方法获得领导者地址
+		//不过也合理 加入的时候应该知道领导者地址的
+		url := fmt.Sprintf("http://localhost:8080/JoinRaftCluster?nodeID=%s&nodeAddress=%s", node.NodeId, node.Address)
 		_, err = http.Get(url)
 		if err != nil {
 			log.Printf("节点：%s加入集群失败：%v", node.NodeId, err)

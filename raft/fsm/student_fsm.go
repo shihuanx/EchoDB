@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/hashicorp/raft"
 	"io"
-	"memoryDataBase/config"
 	"memoryDataBase/interfaces"
 	"memoryDataBase/model"
 )
@@ -16,7 +15,6 @@ type StudentCommand struct {
 	Student     *model.Student `json:"student,omitempty"`
 	Id          string         `json:"id"`
 	ExamineSize int            `json:"examine_size"`
-	Peer        *config.Peer
 }
 
 // StudentFSM 实现 raft.FSM 接口
@@ -49,12 +47,6 @@ func (fsm *StudentFSM) Apply(log *raft.Log) interface{} {
 		return nil
 	case "periodicDelete":
 		fsm.service.PeriodicDeleteInternal(cmd.ExamineSize)
-		return nil
-	case "updatePeers":
-		fsm.service.UpdatePeersInternal(cmd.Peer)
-		return nil
-	case "deleteFatalPeer":
-		fsm.service.DeleteFatalPeerInternal(cmd.Peer)
 		return nil
 	default:
 		return fmt.Errorf("fsm.Apply unknown operation: %s", cmd.Operation)

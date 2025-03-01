@@ -24,11 +24,10 @@ type StudentService struct {
 	CacheService *StudentCacheService
 	raftNode     *raftfpk.Raft
 	node         config.Node
-	peers        []*config.Peer
 }
 
 // NewStudentService 创建并初始化 StudentService 实例
-func NewStudentService(mdbService *StudentMdbService, mysqlService *StudentMysqlService, cacheService *StudentCacheService, node config.Node, peers []*config.Peer) (*StudentService, error) {
+func NewStudentService(mdbService *StudentMdbService, mysqlService *StudentMysqlService, cacheService *StudentCacheService, node config.Node) (*StudentService, error) {
 
 	ss := &StudentService{
 		MdbService:   mdbService,
@@ -36,12 +35,11 @@ func NewStudentService(mdbService *StudentMdbService, mysqlService *StudentMysql
 		CacheService: cacheService,
 		raftNode:     new(raftfpk.Raft),
 		node:         node,
-		peers:        peers,
 	}
 
 	initializer := &raft.RaftInitializerImpl{}
 
-	raftNode, err := initializer.InitRaft(node, peers, ss)
+	raftNode, err := initializer.InitRaft(node, ss)
 	if err != nil {
 		return nil, fmt.Errorf("初始化 Raft 节点 %s 时出错: %w", node.NodeId, err)
 	}
@@ -70,49 +68,23 @@ func (ss *StudentService) StudentExists(id string) bool {
 	return false
 }
 
-// JoinRaftCluster 将节点加入 Raft 集群
-func (ss *StudentService) JoinRaftCluster(nodeID string, nodeAddress string, nodePortAddress string) error {
-	//再次确保是领导者节点才会处理加入集群的请求
-	if ss.raftNode.State() == raftfpk.Leader {
-		future := ss.raftNode.AddVoter(raftfpk.ServerID(nodeID), raftfpk.ServerAddress(nodeAddress), 0, 0)
-		if err := future.Error(); err != nil {
-			return err
-		}
-		log.Printf("领导者节点已将节点：%s加入集群", nodeID)
-
-		newPeer := new(config.Peer)
-		newPeer.NodeId = nodeID
-		newPeer.Address = nodeAddress
-		newPeer.PortAddress = nodePortAddress
-
-		//更新所有节点的Peers
-		err := ss.ApplyRaftCommandToLeader("updatePeers", nil, "", 0, newPeer)
-		if err != nil {
-			log.Printf("领导者节点更新所有节点的Peers失败：%v", err)
-			return err
-		}
-
-		return nil
+// HandleJoinRaftClusterRequest 将节点加入 Raft 集群 领导者节点会被通过gin框架调用执行下面的方法
+func (ss *StudentService) HandleJoinRaftClusterRequest(nodeID string, nodeAddress string) error {
+	future := ss.raftNode.AddVoter(raftfpk.ServerID(nodeID), raftfpk.ServerAddress(nodeAddress), 0, 0)
+	if err := future.Error(); err != nil {
+		return err
 	}
+	log.Printf("领导者节点已将节点：%s加入集群", nodeID)
 	return nil
 }
 
-// UpdatePeersInternal 更新Peers
-func (ss *StudentService) UpdatePeersInternal(peer *config.Peer) {
-	if ss.node.NodeId != peer.NodeId {
-		ss.peers = append(ss.peers, peer)
-		log.Printf("节点：%s更新了Peers：%v", ss.node.NodeId, *peer)
-	}
-}
-
 // DeleteFatalPeer  在遍历寻找领导者地址时，如果发现他的http端口坏了，就会调用这个方法 向领导者节点发送http请求删除集群中的错误节点
-// 领导者删除完集群里的节点后 会发布命令让每个节点删除错误peer
-func (ss *StudentService) DeleteFatalPeer(fatalNode *config.Peer) error {
-	leaderPortAddr, err, _ := ss.GetLeaderPortAddr()
+func (ss *StudentService) DeleteFatalPeer(fatalNodeID string) error {
+	leaderPortAddress, err, _ := ss.GetLeaderPortAddress()
 	if err != nil {
 		log.Printf("节点：%s 获取领导者端口地址失败：%v", ss.node.NodeId, err)
 	}
-	url := fmt.Sprintf("http://localhost:%s/DeleteFatalPeer?PeerID=%s&PeerAddress=%s&PeerPortAddress=%s", leaderPortAddr, fatalNode.NodeId, fatalNode.Address, fatalNode.PortAddress)
+	url := fmt.Sprintf("http://localhost:%s/DeleteFatalNode?PeerID=%s", leaderPortAddress, fatalNodeID)
 	_, err = http.Get(url)
 	if err != nil {
 		log.Printf("StudentService.DeleteFatalPeer err:%v", err)
@@ -122,66 +94,45 @@ func (ss *StudentService) DeleteFatalPeer(fatalNode *config.Peer) error {
 }
 
 // HandleDeletePeerRequest 处理删除Peer的请求
-func (ss *StudentService) HandleDeletePeerRequest(peerID string, peerAddr string, peerPortAddr string) error {
-	if ss.raftNode.State() == raftfpk.Leader {
-		fatalPeer := &config.Peer{
-			NodeId:      peerID,
-			Address:     peerAddr,
-			PortAddress: peerPortAddr,
-		}
-		future := ss.raftNode.RemoveServer(raftfpk.ServerID(peerID), 0, 0)
-		if err := future.Error(); err != nil {
-			return err
-		}
-		if fatalPeer != nil {
-			log.Printf("领导者节点已将节点：%s从集群中删除", peerID)
-			return ss.ApplyRaftCommandToLeader("deleteFatalPeer", nil, "", 0, fatalPeer)
-		}
-		return nil
+func (ss *StudentService) HandleDeletePeerRequest(fatalPeerID string) error {
+	future := ss.raftNode.RemoveServer(raftfpk.ServerID(fatalPeerID), 0, 0)
+	if err := future.Error(); err != nil {
+		return err
 	}
+	log.Printf("领导者节点已将节点：%s从集群中删除", fatalPeerID)
 	return nil
 }
 
-// DeleteFatalPeerInternal 删除错误Peer
-func (ss *StudentService) DeleteFatalPeerInternal(fatalPeer *config.Peer) {
-	for i, peer := range ss.peers {
-		if peer.NodeId == fatalPeer.NodeId {
-			ss.peers = append(ss.peers[:i], ss.peers[i+1:]...)
-			log.Printf("节点：%s删除了Peer：%s", ss.node.NodeId, peer.NodeId)
-			return
-		}
-	}
-}
-
-// GetLeaderPortAddr 获取领导者端口地址 向集群的各个节点都发送一个http请求 如果他是领导者节点 他就会把自己的端口号返回过来
-func (ss *StudentService) GetLeaderPortAddr() (string, error, *config.Peer) {
-	fatalNode := &config.Peer{}
+// GetLeaderPortAddress 获取领导者端口地址 向集群的各个节点都发送一个http请求 如果他是领导者节点 他就会把自己的端口号返回过来
+func (ss *StudentService) GetLeaderPortAddress() (string, error, string) {
+	var fatalNodeID string
 	if ss.raftNode.State() == raftfpk.Leader {
-		return ss.node.PortAddress, nil, nil
+		return ss.node.Address, nil, ""
 	}
-	for _, node := range ss.peers {
-		url := fmt.Sprintf("http://localhost:%s/GetLeaderAddress", node.PortAddress)
+	for _, server := range ss.raftNode.GetConfiguration().Configuration().Servers {
+		//由于TCP通信只能用完整地址 而127.0.0.1:8080这样的格式不知道为啥gin框架行不通 所以只能这样得到端口地址了
+		stringParts := strings.Split(string(server.Address), ":")
+		portAddress := stringParts[1]
+		url := fmt.Sprintf("http://localhost:%s/GetLeaderPortAddress", portAddress)
 		resp, err := http.Get(url)
 		if err != nil {
 			if strings.Contains(err.Error(), "No connection could be made because the target machine actively refused it") {
-				log.Printf("检测到节点：%s端口：%s失效，将跳过这次操作 并在集群中广播删除该节点", node.NodeId, node.PortAddress)
-				fatalNode.NodeId = node.NodeId
-				fatalNode.Address = node.Address
-				fatalNode.PortAddress = node.PortAddress
+				log.Printf("检测到节点：%s端口：%s失效，将跳过这次操作 并在集群中删除该节点", string(server.ID), string(server.Address))
+				fatalNodeID = string(server.ID)
 				continue
 			}
-			log.Printf("StudentService.GetLeaderPortAddr 请求出错：%v", err)
-			return "", fmt.Errorf("StudentService.GetLeaderPortAddr 请求出错：%w", err), fatalNode
+			log.Printf("StudentService.GetLeaderPortAddress 请求出错：%v", err)
+			return "", fmt.Errorf("StudentService.GetLeaderPortAddress 请求出错：%w", err), fatalNodeID
 		}
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			log.Printf("StudentService.GetLeaderPortAddr 读取响应体出错：%v", err)
-			return "", fmt.Errorf("StudentService.GetLeaderPortAddr 读取响应体出错：%w", err), fatalNode
+			log.Printf("StudentService.GetLeaderPortAddress 读取响应体出错：%v", err)
+			return "", fmt.Errorf("StudentService.GetLeaderPortAddress 读取响应体出错：%w", err), fatalNodeID
 		}
 
 		// 检查响应体长度
 		if len(body) == 0 {
-			log.Printf("StudentService.GetLeaderPortAddr 响应体为空：%s", url)
+			log.Printf("StudentService.GetLeaderPortAddress 响应体为空：%s", url)
 			continue
 		}
 
@@ -189,18 +140,18 @@ func (ss *StudentService) GetLeaderPortAddr() (string, error, *config.Peer) {
 		var result response.Result
 		err = json.Unmarshal(body, &result)
 		if err != nil {
-			fmt.Printf("StudentService.GetLeaderPortAddr 解析 JSON 数据出错: %v\n", err)
-			return "", fmt.Errorf("StudentService.GetLeaderPortAddr 解析 JSON 数据出错: %w", err), fatalNode
+			fmt.Printf("StudentService.GetLeaderPortAddress 解析 JSON 数据出错: %v\n", err)
+			return "", fmt.Errorf("StudentService.GetLeaderPortAddress 解析 JSON 数据出错: %w", err), fatalNodeID
 		}
 
 		// 提取 leaderAddr
 		leaderPortAddr, ok := result.Data.(string)
 		if ok {
-			return leaderPortAddr, nil, fatalNode
+			return leaderPortAddr, nil, fatalNodeID
 		}
-		return "", fmt.Errorf("StudentService.GetLeaderPortAddr 领导者地址 类型断言失败"), fatalNode
+		return "", fmt.Errorf("StudentService.GetLeaderPortAddress 领导者地址 类型断言失败"), fatalNodeID
 	}
-	return "", fmt.Errorf("StudentService.GetLeaderPortAddr 遍历结束仍没有找到领导者"), fatalNode
+	return "", fmt.Errorf("StudentService.GetLeaderPortAddress 遍历结束仍没有找到领导者"), fatalNodeID
 }
 
 // HandleGetLeaderPortAddressRequest 处理获取领导者地址的请求 返回领导者的端口号
@@ -213,14 +164,13 @@ func (ss *StudentService) HandleGetLeaderPortAddressRequest() string {
 }
 
 // ApplyRaftCommandToLeader 将命令提交给领导者处理
-func (ss *StudentService) ApplyRaftCommandToLeader(operation string, student *model.Student, id string, examineSize int, peer *config.Peer) error {
+func (ss *StudentService) ApplyRaftCommandToLeader(operation string, student *model.Student, id string, examineSize int) error {
 	// 创建 Node 命令
 	cmd := fsm.StudentCommand{
 		Operation:   operation,
 		Student:     student,
 		Id:          id,
 		ExamineSize: examineSize,
-		Peer:        peer,
 	}
 	// 序列化命令
 	cmdData, err := json.Marshal(cmd)
@@ -243,9 +193,9 @@ func (ss *StudentService) ApplyRaftCommandToLeader(operation string, student *mo
 		return nil
 	} else {
 		//如果不是 那就找到领导者节点的端口 把命令交给领导者节点处理
-		leaderPortAddr, err, fatalNode := ss.GetLeaderPortAddr()
-		if fatalNode != nil {
-			err := ss.DeleteFatalPeer(fatalNode)
+		leaderPortAddress, err, fatalNodeID := ss.GetLeaderPortAddress()
+		if fatalNodeID != "" {
+			err := ss.DeleteFatalPeer(fatalNodeID)
 			if err != nil {
 				return err
 			}
@@ -253,7 +203,7 @@ func (ss *StudentService) ApplyRaftCommandToLeader(operation string, student *mo
 		if err != nil {
 			return fmt.Errorf("StudentService.ApplyRaftCommandToLeader 获取领导者地址失败：%w", err)
 		}
-		url := fmt.Sprintf("http://localhost:%s/LeaderHandleCommand?cmd=%s", leaderPortAddr, cmdData)
+		url := fmt.Sprintf("http://localhost:%s/LeaderHandleCommand?cmd=%s", leaderPortAddress, cmdData)
 		resp, err := http.Get(url)
 		if err != nil {
 			log.Printf("将cmd命令：%s发送给领导者失败：%v", cmdData, err)
@@ -571,7 +521,7 @@ func (ss *StudentService) ReLoadCacheData(interval time.Duration) {
 	for {
 		select {
 		case <-ticker.C:
-			err := ss.ApplyRaftCommandToLeader("reloadCacheData", nil, "", 0, nil)
+			err := ss.ApplyRaftCommandToLeader("reloadCacheData", nil, "", 0)
 			if err != nil {
 				log.Printf("StudentService.ReLoadCacheData 分布式加载缓存数据失败: %v，跳过这次操作", err)
 				continue
@@ -588,7 +538,7 @@ func (ss *StudentService) PeriodicDelete(interval time.Duration, examineSize int
 	for {
 		select {
 		case <-ticker.C:
-			err := ss.ApplyRaftCommandToLeader("periodicDelete", nil, "", examineSize, nil)
+			err := ss.ApplyRaftCommandToLeader("periodicDelete", nil, "", examineSize)
 			if err != nil {
 				log.Printf("StudentService.PeriodicDelete 分布式删除内存数据库过期键失败：: %v，跳过这次操作", err)
 				continue
@@ -599,15 +549,15 @@ func (ss *StudentService) PeriodicDelete(interval time.Duration, examineSize int
 
 // AddStudent 接收添加学生命令 提交给Raft节点
 func (ss *StudentService) AddStudent(student *model.Student) error {
-	return ss.ApplyRaftCommandToLeader("add", student, "", 0, nil)
+	return ss.ApplyRaftCommandToLeader("add", student, "", 0)
 }
 
 // UpdateStudent 接收更新学生命令 提交给Raft节点
 func (ss *StudentService) UpdateStudent(student *model.Student) error {
-	return ss.ApplyRaftCommandToLeader("update", student, "", 0, nil)
+	return ss.ApplyRaftCommandToLeader("update", student, "", 0)
 }
 
 // DeleteStudent 接收删除学生命令 提交给Raft节点
 func (ss *StudentService) DeleteStudent(id string) error {
-	return ss.ApplyRaftCommandToLeader("delete", nil, id, 0, nil)
+	return ss.ApplyRaftCommandToLeader("delete", nil, id, 0)
 }

@@ -13,10 +13,10 @@ import (
 type RaftInitializerImpl struct{}
 
 // InitRaft 初始化 Raft 节点
-func (r *RaftInitializerImpl) InitRaft(node config.Node, peers []*config.Peer, service interfaces.StudentServiceInterface) (*raft.Raft, error) {
+func (r *RaftInitializerImpl) InitRaft(node config.Node, service interfaces.StudentServiceInterface) (*raft.Raft, error) {
 	log.Printf("开始初始化 Raft 节点: NodeID=%s, Address=%s", node.NodeId, node.Address)
 	fsmInstance := fsm.NewStudentFSM(service)
-	raftNode, err := nodepkg.NewRaftNode(node, peers, fsmInstance, service)
+	raftNode, err := nodepkg.NewRaftNode(node, fsmInstance, service)
 	if err != nil {
 		log.Printf("初始化 Raft 节点失败: NodeID=%s, Error=%v", node.NodeId, err)
 		return nil, err
