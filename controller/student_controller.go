@@ -124,6 +124,7 @@ func (sc *StudentController) DeleteFatalPeer(c *gin.Context) {
 		log.Printf("StudentController.DeleteFatalPeer err:%v", err)
 		c.JSON(500, response.Error(err.Error()))
 	} else {
+		log.Printf("领导者节点已删除节点：%s", peerID)
 		c.JSON(http.StatusOK, response.SuccessWithoutData())
 	}
 }

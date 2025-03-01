@@ -29,9 +29,10 @@ type CachePreheatingConfig struct {
 
 // ServerConfig 定义服务器配置结构体
 type ServerConfig struct {
-	ReloadInterval         time.Duration //重载缓存的时间间隔
-	PeriodicDeleteInterval time.Duration //过期删除的时间间隔
-	ExamineSize            int           //过期删除时检测的键的数量
+	ReloadInterval                  time.Duration //重载缓存的时间间隔
+	PeriodicDeleteInterval          time.Duration //过期删除的时间间隔
+	ExamineSize                     int           //过期删除时检测的键的数量
+	PeriodicDeleteFatalPeelInterval time.Duration
 }
 
 // Node 定义当前节点信息结构体
@@ -73,9 +74,10 @@ func GetConfig() Config {
 			LoadRatio: 0.5,
 		},
 		Server: ServerConfig{
-			ReloadInterval:         time.Hour,
-			PeriodicDeleteInterval: time.Hour,
-			ExamineSize:            10,
+			ReloadInterval:                  time.Hour,
+			PeriodicDeleteInterval:          time.Hour,
+			ExamineSize:                     10,
+			PeriodicDeleteFatalPeelInterval: time.Hour,
 		},
 		Node: Node{
 			NodeId:      "节点1",

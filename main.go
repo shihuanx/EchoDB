@@ -50,31 +50,23 @@ func main() {
 
 	//启动时等待10秒 第一个节点要等待领导者选举完成再获得地址 后面的节点要等待加入集群
 	time.Sleep(10 * time.Second)
-	log.Printf("节点：%s 等待领导者选举完成", cfg.Node.NodeId)
+	log.Printf("节点：%s 等待领导者选举完成或加入集群", cfg.Node.NodeId)
 
-	leaderPortAddress, err, fatalNodeID := studentService.GetLeaderPortAddress()
-	if fatalNodeID != "" {
-		if err = studentService.DeleteFatalPeer(fatalNodeID); err != nil {
-			log.Printf("删除损坏节点：%s失败：%v", fatalNodeID, err)
-			return
-		}
-	}
 	//定期清空缓存 定期清除内存中的过期键 让领导者节点提交命令给所有节点
-	if err != nil {
-		log.Fatalf("节点：%s 获取领导者端口地址失败：%v", cfg.Node.NodeId, err)
-	}
 	go func() {
-		if cfg.Node.PortAddress == leaderPortAddress {
-			studentService.ReLoadCacheData(cfg.Server.ReloadInterval)
-		}
+		studentService.ReLoadCacheData(cfg.Server.ReloadInterval)
 	}()
 
 	//定期删除内存数据库过期键
 	go func() {
-		if cfg.Node.PortAddress == leaderPortAddress {
-			studentService.PeriodicDelete(cfg.Server.PeriodicDeleteInterval, cfg.Server.ExamineSize)
-		}
+		studentService.PeriodicDelete(cfg.Server.PeriodicDeleteInterval, cfg.Server.ExamineSize)
 	}()
+
+	//定期检测有没有损坏的节点 有的话删除
+	go func() {
+		studentService.PeriodicDeleteFatalPeel(cfg.Server.PeriodicDeleteFatalPeelInterval)
+	}()
+
 	//初始化路由
 	studentRouter := routers.SetUpStudentRouter(studentController)
 	serverAddress := ":" + cfg.Node.PortAddress

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"memoryDataBase/config"
-	"memoryDataBase/interfaces"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,7 +13,7 @@ import (
 )
 
 // NewRaftNode 创建并启动 Raft 节点
-func NewRaftNode(node config.Node, fsm raft.FSM, service interfaces.StudentServiceInterface) (*raft.Raft, error) {
+func NewRaftNode(node config.Node, fsm raft.FSM) (*raft.Raft, error) {
 	log.Printf("开始创建 Raft 节点: NodeID=%s, Address=%s", node.NodeId, node.Address)
 
 	// 配置 Raft
