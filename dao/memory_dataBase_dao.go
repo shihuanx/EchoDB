@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"log"
 	"math/rand"
+	"memoryDataBase/config"
 	"sync"
 	"time"
 )
@@ -22,14 +23,14 @@ type MemoryDBDao struct {
 }
 
 // NewMemoryDBDao 初始化内存数据库实例
-func NewMemoryDBDao(capacity int, evictRatio float64) *MemoryDBDao {
+func NewMemoryDBDao(cfg config.MemoryDBConfig) *MemoryDBDao {
 	mdb := &MemoryDBDao{
 		dataMap:    make(map[string]interface{}),
 		expires:    make(map[string]time.Time),
-		capacity:   capacity,
+		capacity:   cfg.Capacity,
 		lruList:    list.New(),
 		lruMap:     make(map[string]*list.Element),
-		evictRatio: evictRatio,
+		evictRatio: cfg.EvictRatio,
 	}
 	return mdb
 }
@@ -186,6 +187,8 @@ func (mdb *MemoryDBDao) evict() {
 		// 获取链表尾部元素（最久未使用的键）
 		element := mdb.lruList.Back()
 		key := element.Value.(string)
+		// 从双向链表中移除该元素
+		mdb.lruList.Remove(element)
 		// 删除该键 不能调用带锁的删除方法 不然会死锁 因为Set()方法已经加了写锁 故内部不需要再加锁
 		mdb.deleteKey(key)
 		log.Printf("LRU 淘汰键：%s", key)

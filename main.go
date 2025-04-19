@@ -2,41 +2,20 @@ package main
 
 import (
 	"log"
-	"memoryDataBase/cache"
 	"memoryDataBase/config"
-	"memoryDataBase/controller"
-	"memoryDataBase/dao"
-	"memoryDataBase/database"
-	"memoryDataBase/routers"
-	"memoryDataBase/service"
 	"time"
 )
 
 func main() {
-	// 初始化数据库和缓存
-	cfg := config.GetConfig()
-
-	if err := database.InitDB(cfg.MySQL.DSN); err != nil {
-		log.Fatalf("节点：%s 初始化数据库失败: %v", cfg.Node.NodeId, err)
-	}
-	cache.InitRedis(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB)
-
-	// 初始化 DAO
-	studentCacheDao := dao.NewStudentCacheDao(cache.RedisClient)
-	studentMysqlDao := dao.NewStudentMysqlDao(database.DB)
-	memoryDBDao := dao.NewMemoryDBDao(cfg.MemoryDB.Capacity, cfg.MemoryDB.EvictRatio)
-
-	// 初始化服务
-	studentCacheService := service.NewStudentCacheService(studentCacheDao)
-	studentMysqlService := service.NewStudentMysqlService(studentMysqlDao)
-	studentMdbService := service.NewStudentMdbService(memoryDBDao)
-	studentService, err := service.NewStudentService(studentMdbService, studentMysqlService, studentCacheService, cfg.Node)
+	// 使用 wire 生成的代码初始化应用程序
+	app, err := InitializeApp()
+	studentService := app.StudentService
+	studentRouter := app.StudentRouter
 	if err != nil {
-		log.Fatalf("节点：%s 初始化学生服务层失败：%v", cfg.Node.NodeId, err)
+		log.Fatalf("初始化应用程序失败: %v", err)
 	}
 
-	// 初始化控制器
-	studentController := controller.NewStudentController(studentService)
+	cfg := config.GetConfig()
 
 	//启动时加载缓存数据到内存
 	if err = studentService.LoadCacheToMemory(cfg.MemoryDB.Capacity, cfg.CachePreheating.LoadRatio); err != nil {
@@ -67,8 +46,7 @@ func main() {
 		studentService.PeriodicDeleteFatalPeel(cfg.Server.PeriodicDeleteFatalPeelInterval)
 	}()
 
-	//初始化路由
-	studentRouter := routers.SetUpStudentRouter(studentController)
+	// 启动服务器
 	serverAddress := ":" + cfg.Node.PortAddress
 	if err = studentRouter.Run(serverAddress); err != nil {
 		log.Fatalf("节点：%s 初始化学生路由时出错：%v", cfg.Node.NodeId, err)

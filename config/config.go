@@ -74,8 +74,8 @@ func GetConfig() Config {
 			LoadRatio: 0.5,
 		},
 		Server: ServerConfig{
-			ReloadInterval:                  time.Hour,
-			PeriodicDeleteInterval:          time.Hour,
+			ReloadInterval:                  time.Hour, //重载缓存的时间间隔
+			PeriodicDeleteInterval:          time.Hour, //定期删除过期键的时间间隔
 			ExamineSize:                     10,
 			PeriodicDeleteFatalPeelInterval: time.Hour,
 		},

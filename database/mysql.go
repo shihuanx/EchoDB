@@ -3,16 +3,17 @@ package database
 import (
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	"memoryDataBase/config"
 )
 
 var DB *gorm.DB
 
 // InitDB 初始化数据库连接
-func InitDB(dsn string) error {
+func InitDB(cfg config.MySQLConfig) (*gorm.DB, error) {
 	var err error
-	DB, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	DB, err = gorm.Open(mysql.Open(cfg.DSN), &gorm.Config{})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return nil
+	return DB, nil
 }

@@ -490,7 +490,6 @@ func (ss *StudentService) UpdateStudentInternal(student *model.Student) error {
 			}
 			log.Printf("回滚数据库事务并恢复缓存")
 			return fmt.Errorf("StudentService.UpdateStudentInternal 更新内存中的学生：%s失败：%w", student.ID, err)
-
 		}
 	}
 	if err := tx.Commit().Error; err != nil {

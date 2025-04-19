@@ -1,14 +1,18 @@
 package cache
 
-import "github.com/redis/go-redis/v9"
+import (
+	"github.com/redis/go-redis/v9"
+	"memoryDataBase/config"
+)
 
 var RedisClient *redis.Client
 
 // InitRedis 初始化redis
-func InitRedis(addr, password string, db int) {
+func InitRedis(config config.RedisConfig) *redis.Client {
 	RedisClient = redis.NewClient(&redis.Options{
-		Addr:     addr,
-		Password: password,
-		DB:       db,
+		Addr:     config.Addr,
+		Password: config.Password,
+		DB:       config.DB,
 	})
+	return RedisClient
 }
