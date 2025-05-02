@@ -12,5 +12,5 @@ type StudentServiceInterface interface {
 	ReLoadCacheDataInternal()
 	PeriodicDeleteInternal(examineSize int)
 	GetLeaderPortAddress() (string, error, string)
-	DeleteFatalPeer(fatalPeerAddress string) error
+	ChangeLeaderPortAddressInternal(leaderPortAddr string)
 }

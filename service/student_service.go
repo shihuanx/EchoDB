@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	raftfpk "github.com/hashicorp/raft"
+	"github.com/streadway/amqp"
 	"io"
 	"log"
 	"memoryDataBase/config"
@@ -13,28 +14,31 @@ import (
 	"memoryDataBase/raft/fsm"
 	"memoryDataBase/response"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
 
 // StudentService 定义学生服务层结构体
 type StudentService struct {
-	MdbService   *StudentMdbService
-	MysqlService *StudentMysqlService
-	CacheService *StudentCacheService
-	RaftNode     *raftfpk.Raft
-	node         config.Node
+	MdbService        *StudentMdbService
+	MysqlService      *StudentMysqlService
+	CacheService      *StudentCacheService
+	RaftNode          *raftfpk.Raft
+	node              config.Node
+	leaderPortAddress string
 }
 
 // NewStudentService 创建并初始化 StudentService 实例
 func NewStudentService(mdbService *StudentMdbService, mysqlService *StudentMysqlService, cacheService *StudentCacheService, node config.Node) (*StudentService, error) {
 
 	ss := &StudentService{
-		MdbService:   mdbService,
-		MysqlService: mysqlService,
-		CacheService: cacheService,
-		RaftNode:     new(raftfpk.Raft),
-		node:         node,
+		MdbService:        mdbService,
+		MysqlService:      mysqlService,
+		CacheService:      cacheService,
+		RaftNode:          new(raftfpk.Raft),
+		node:              node,
+		leaderPortAddress: "8080",
 	}
 
 	initializer := &raft.RaftInitializerImpl{}
@@ -79,13 +83,9 @@ func (ss *StudentService) HandleJoinRaftClusterRequest(nodeID string, nodeAddres
 }
 
 // DeleteFatalPeer  在遍历寻找领导者地址时，如果发现他的http端口坏了，就会调用这个方法 向领导者节点发送http请求删除集群中的错误节点
-func (ss *StudentService) DeleteFatalPeer(fatalNodeID string) error {
-	leaderPortAddress, err, _ := ss.GetLeaderPortAddress()
-	if err != nil {
-		log.Printf("节点：%s 获取领导者端口地址失败：%v", ss.node.NodeId, err)
-	}
+func (ss *StudentService) DeleteFatalPeer(fatalNodeID string, leaderPortAddress string) error {
 	url := fmt.Sprintf("http://localhost:%s/DeleteFatalPeer?PeerID=%s", leaderPortAddress, fatalNodeID)
-	_, err = http.Get(url)
+	_, err := http.Get(url)
 	if err != nil {
 		log.Printf("StudentService.DeleteFatalPeer err:%v", err)
 		return fmt.Errorf("StudentService.DeleteFatalPeer err:%w", err)
@@ -226,19 +226,78 @@ func (ss *StudentService) ApplyRaftCommandToLeader(operation string, student *mo
 		return nil
 	} else {
 		//如果不是 那就找到领导者节点的端口 把命令交给领导者节点处理
-		leaderPortAddress, err, fatalNodeID := ss.GetLeaderPortAddress()
-		if fatalNodeID != "" {
-			err := ss.DeleteFatalPeer(fatalNodeID)
-			if err != nil {
-				return err
-			}
-		}
-		if err != nil {
-			return fmt.Errorf("StudentService.ApplyRaftCommandToLeader 获取领导者地址失败：%w", err)
-		}
-		url := fmt.Sprintf("http://localhost:%s/LeaderHandleCommand?cmd=%s", leaderPortAddress, cmdData)
+		url := fmt.Sprintf("http://localhost:%s/LeaderHandleCommand?cmd=%s", ss.leaderPortAddress, cmdData)
 		resp, err := http.Get(url)
 		if err != nil {
+			if strings.Contains(err.Error(), "No connection could be made because the target machine actively refused it") {
+				var result response.Result
+				leaderPortAddress, err, fatalNodeID := ss.GetLeaderPortAddress()
+				if err != nil {
+					return fmt.Errorf("StudentService.ApplyRaftCommandToLeader 获取领导者地址失败：%w", err)
+				}
+
+				if fatalNodeID != "" {
+					err = ss.DeleteFatalPeer(fatalNodeID, leaderPortAddress)
+					if err != nil {
+						log.Printf(err.Error())
+					}
+				}
+
+				url = fmt.Sprintf("http://localhost:%s/LeaderHandleCommand?cmd=%s", leaderPortAddress, cmdData)
+				resp, err := http.Get(url)
+				if err != nil {
+					log.Printf("将cmd命令：%s发送给领导者失败：%v", cmdData, err)
+					return fmt.Errorf("将cmd命令：%s发送给领导者失败：%v", cmdData, err)
+				}
+				defer resp.Body.Close()
+
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					log.Printf("读取响应体出错：%v", err)
+					return err
+				}
+
+				// 解析 JSON 响应
+				err = json.Unmarshal(body, &result)
+				if err != nil {
+					fmt.Printf("解析 JSON 数据出错: %v\n", err)
+				}
+				//把错误信息返回给前端发送的对应端口
+				if result.Code != 1 {
+					return fmt.Errorf("领导者节点处理命令失败：%v", result.Message)
+				}
+
+				go func() {
+					cmd.LeaderPortAddress = leaderPortAddress
+					cmd.Operation = "changeLeaderPortAddr"
+					cmdData, err = json.Marshal(cmd)
+					if err != nil {
+						log.Printf(err.Error())
+					}
+					url = fmt.Sprintf("http://localhost:%s/LeaderHandleCommand?cmd=%s", leaderPortAddress, cmdData)
+					resp, err := http.Get(url)
+					if err != nil {
+						log.Printf("将cmd命令：%s发送给领导者失败：%v", cmdData, err)
+					}
+					defer resp.Body.Close()
+
+					body, err := io.ReadAll(resp.Body)
+					if err != nil {
+						log.Printf("读取响应体出错：%v", err)
+					}
+
+					// 解析 JSON 响应
+					err = json.Unmarshal(body, &result)
+					if err != nil {
+						log.Printf("解析 JSON 数据出错: %v\n", err)
+					}
+					//把错误信息返回给前端发送的对应端口
+					if result.Code != 1 {
+						log.Printf("领导者节点处理命令失败：%v", result.Message)
+					}
+				}()
+				return nil
+			}
 			log.Printf("将cmd命令：%s发送给领导者失败：%v", cmdData, err)
 			return fmt.Errorf("将cmd命令：%s发送给领导者失败：%v", cmdData, err)
 		}
@@ -277,6 +336,10 @@ func (ss *StudentService) LeaderHandleCommand(data string) error {
 	}
 	log.Printf("领导者节点已接收并提交命令到状态机")
 	return nil
+}
+
+func (ss *StudentService) ChangeLeaderPortAddressInternal(leaderPortAddr string) {
+	ss.leaderPortAddress = leaderPortAddr
 }
 
 // RestoreCacheData 恢复缓存机制 mysql有事务可以很方便地回滚 此函数专门用于恢复缓存的数据
@@ -596,4 +659,178 @@ func (ss *StudentService) UpdateStudent(student *model.Student) error {
 // DeleteStudent 接收删除学生命令 提交给Raft节点
 func (ss *StudentService) DeleteStudent(id string) error {
 	return ss.ApplyRaftCommandToLeader("delete", nil, id, 0)
+}
+
+func (ss *StudentService) AddCourse(course *model.Course) error {
+	return ss.MysqlService.AddCourse(course)
+}
+
+func (ss *StudentService) GetAllCourse() ([]*model.Course, error) {
+	return ss.MysqlService.GetAllCourse()
+}
+
+func (ss *StudentService) ChooseCourse(studentCourse *model.StudentCourse) error {
+	err := ss.CacheService.GetCourseRemainsAndUpdate(studentCourse.CourseID)
+	if err != nil {
+		return err
+	}
+
+	conn, err := amqp.Dial("amqp://guest:guest@192.168.88.128:5673/")
+	if err != nil {
+		return fmt.Errorf("无法连接到 RabbitMQ: %w", err)
+	}
+	defer func(conn *amqp.Connection) {
+		err := conn.Close()
+		if err != nil {
+			log.Printf("无法关闭 RabbitMQ 连接: %v", err)
+			return
+		}
+	}(conn)
+
+	ch, err := conn.Channel()
+	if err != nil {
+		return fmt.Errorf("无法创建 RabbitMQ 通道: %w", err)
+	}
+	defer func(ch *amqp.Channel) {
+		err := ch.Close()
+		if err != nil {
+			log.Printf("无法关闭 RabbitMQ 通道: %v", err)
+		}
+	}(ch)
+
+	// 3. 声明消息要发送到的队列
+	q, err := ch.QueueDeclare(
+		"course", // name
+		true,     // durable
+		false,    // delete when unused
+		false,    // exclusive
+		false,    // no-wait
+		nil,      // arguments
+	)
+	if err != nil {
+		return fmt.Errorf("无法声明 RabbitMQ 队列: %w", err)
+	}
+
+	// 构造消息内容，包含学生 ID 和课程 ID
+	msgContent := fmt.Sprintf("%d,%d", studentCourse.StudentID, studentCourse.CourseID)
+	msg := amqp.Publishing{
+		ContentType: "text/plain",
+		Body:        []byte(msgContent),
+	}
+
+	// 将消息发送到队列
+	if err = ch.Publish(
+		"",     // 交换器名称
+		q.Name, // 路由键（队列名称）
+		false,  // 是否强制
+		false,  // 是否立即
+		msg,
+	); err != nil {
+		return fmt.Errorf("无法将选课请求发送到 RabbitMQ 队列: %w", err)
+	}
+
+	log.Printf("学生:%d 课程:%d 选课请求已添加到队列", studentCourse.StudentID, studentCourse.CourseID)
+	return nil
+}
+
+func (ss *StudentService) LoadCourseRemains() error {
+	var courses []*model.Course
+	courses, err := ss.GetAllCourse()
+	if err != nil {
+		return err
+	}
+	for _, course := range courses {
+		err := ss.CacheService.AddCourseRemains(course.ID, course.Capsize-course.Chooses)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (ss *StudentService) ChooseCourseConsumer() {
+	// 建立连接
+	conn, err := amqp.Dial("amqp://guest:guest@192.168.88.128:5673/")
+	if err != nil {
+		log.Fatalf("Failed to connect to RabbitMQ: %v", err)
+	}
+	defer func(conn *amqp.Connection) {
+		err := conn.Close()
+		if err != nil {
+			log.Printf("Failed to close RabbitMQ connection: %v", err)
+		}
+	}(conn)
+
+	// 获取channel
+	ch, err := conn.Channel()
+	if err != nil {
+		log.Fatalf("Failed to open a channel: %v", err)
+	}
+	defer func(ch *amqp.Channel) {
+		err := ch.Close()
+		if err != nil {
+			log.Printf("Failed to close RabbitMQ channel: %v", err)
+		}
+	}(ch)
+
+	// 声明队列
+	q, err := ch.QueueDeclare(
+		"course", // name
+		true,     // durable
+		false,    // delete when unused
+		false,    // exclusive
+		false,    // no-wait
+		nil,      // arguments
+	)
+	if err != nil {
+		log.Fatalf("Failed to declare a queue: %v", err)
+	}
+
+	// 获取接收消息的Delivery通道
+	messages, err := ch.Consume(
+		q.Name, // queue
+		"",     // consumer
+		true,   // auto-ack
+		false,  // exclusive
+		false,  // no-local
+		false,  // no-wait
+		nil,    // args
+	)
+	if err != nil {
+		log.Fatalf("Failed to register a consumer: %v", err)
+	}
+
+	forever := make(chan bool)
+
+	go func() {
+		for d := range messages {
+			log.Printf("Received a message: %s", d.Body)
+			stringParts := strings.Split(string(d.Body), ",")
+			studentCourse := &model.StudentCourse{}
+			StudentID, err := strconv.Atoi(stringParts[0])
+			if err != nil {
+				log.Printf("解析学生 ID 时出错: %v", err)
+				continue
+			}
+			CourseID, err := strconv.Atoi(stringParts[1])
+			if err != nil {
+				log.Printf("解析课程 ID 时出错: %v", err)
+				continue
+			}
+
+			studentCourse.StudentID = StudentID
+			studentCourse.CourseID = CourseID
+
+			if err := ss.MysqlService.ChooseCourse(studentCourse); err != nil {
+				log.Printf("选课失败：%v", err)
+				continue
+			}
+
+			log.Printf("Done")
+			//d.Ack(false)
+		}
+	}()
+
+	log.Printf(" [*] Waiting for messages. To exit press CTRL+C")
+	<-forever
 }

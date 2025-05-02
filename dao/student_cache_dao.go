@@ -149,3 +149,50 @@ func (d StudentCacheDao) GetAllStudents() ([]*model.Student, error) {
 	}
 	return students, nil
 }
+
+func (d StudentCacheDao) AddCourseRemains(id int, remains int) error {
+	ctx := context.Background()
+	if err := d.client.Set(ctx, "course:"+strconv.Itoa(id), remains, 0).Err(); err != nil {
+		return fmt.Errorf("StudentRedisDao.AddCourseRemains Set err: %w", err)
+	}
+	return nil
+}
+
+func (d StudentCacheDao) GetCourseRemainsAndUpdate(id int) error {
+	//ctx := context.Background()
+	//remainsStr, err := d.client.Get(ctx, "course:"+strconv.Itoa(id)).Result()
+	//if err != nil {
+	//	return 0, fmt.Errorf("StudentRedisDao.GetCourseRemainsAndUpdate Get err: %w", err)
+	//}
+	//if remainsStr == "0" {
+	//	return 0, fmt.Errorf("StudentRedisDao.GetCourseRemainsAndUpdate 容量已满")
+	//}
+	//remains, err := strconv.Atoi(remainsStr)
+	//if err != nil {
+	//	return 0, fmt.Errorf("StudentRedisDao.GetCourseRemainsAndUpdate Atoi err: %w", err)
+	//}
+	//return remains, nil
+
+	ctx := context.Background()
+	// Lua 脚本：先获取课程剩余名额，若名额大于 0 则减 1
+	script := `
+        local remains = tonumber(redis.call('GET', KEYS[1]))
+        if remains and remains > 0 then
+            redis.call('SET', KEYS[1], remains - 1)
+            return 1
+        end
+        return 0
+    `
+	result, err := d.client.Eval(ctx, script, []string{"course:" + strconv.Itoa(id)}).Result()
+	if err != nil {
+		return fmt.Errorf("使用 Lua 脚本尝试选课出错: %w", err)
+	}
+	success, ok := result.(int64)
+	if !ok {
+		return fmt.Errorf("解析 Lua 脚本返回结果出错")
+	}
+	if success == 0 {
+		return fmt.Errorf("课程容量已满或课程不存在")
+	}
+	return nil
+}

@@ -128,3 +128,53 @@ func (sc *StudentController) DeleteFatalPeer(c *gin.Context) {
 		c.JSON(http.StatusOK, response.SuccessWithoutData())
 	}
 }
+
+func (sc *StudentController) AddCourse(c *gin.Context) {
+	var course *model.Course
+	if err := c.BindJSON(&course); err != nil {
+		log.Printf("StudentController.AddCourse err：%v", err.Error())
+		c.JSON(http.StatusBadRequest, response.Error(err.Error()))
+	}
+	if err := sc.studentService.AddCourse(course); err != nil {
+		log.Printf("StudentController.AddCourse err：%v", err)
+		c.JSON(http.StatusBadRequest, response.Error(err.Error()))
+	} else {
+		log.Printf("添加课程：%d", course.ID)
+		c.JSON(http.StatusOK, response.SuccessWithoutData())
+	}
+}
+
+func (sc *StudentController) GetAllCourse(c *gin.Context) {
+	if resp, err := sc.studentService.GetAllCourse(); err != nil {
+		log.Printf("StudentController.GetCourse err：%v", err)
+		c.JSON(http.StatusBadRequest, response.Error(err.Error()))
+	} else {
+		log.Printf("查询所有课程")
+		c.JSON(http.StatusOK, response.Success(resp))
+	}
+}
+
+func (sc *StudentController) ChooseCourse(c *gin.Context) {
+	var studentCourse *model.StudentCourse
+	if err := c.BindJSON(&studentCourse); err != nil {
+		log.Printf("StudentController.ChooseCourse err：%v", err.Error())
+		c.JSON(http.StatusBadRequest, response.Error(err.Error()))
+	}
+	if err := sc.studentService.ChooseCourse(studentCourse); err != nil {
+		log.Printf("StudentController.ChooseCourse err：%v", err.Error())
+		c.JSON(http.StatusBadRequest, response.Error(err.Error()))
+	} else {
+		log.Printf("选课成功")
+		c.JSON(http.StatusOK, response.SuccessWithoutData())
+	}
+}
+
+func (sc *StudentController) LoadCourseRemains(context *gin.Context) {
+	if err := sc.studentService.LoadCourseRemains(); err != nil {
+		log.Printf("StudentController.LoadCourseRemains err：%v", err.Error())
+		context.JSON(http.StatusBadRequest, response.Error(err.Error()))
+	} else {
+		log.Printf("加载课程余量成功")
+		context.JSON(http.StatusOK, response.SuccessWithoutData())
+	}
+}

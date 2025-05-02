@@ -243,3 +243,50 @@ func (sms *StudentMysqlService) DeleteStudentCount(id string) {
 		}
 	}
 }
+
+func (sms *StudentMysqlService) AddCourse(course *model.Course) error {
+	return sms.mysqlDao.AddCourse(course)
+}
+
+func (sms *StudentMysqlService) GetAllCourse() ([]*model.Course, error) {
+	return sms.mysqlDao.GetAllCourse()
+}
+
+func (sms *StudentMysqlService) ChooseCourse(studentCourse *model.StudentCourse) error {
+	//course, err := sms.mysqlDao.GetCourse(studentCourse.CourseID)
+	//if err != nil {
+	//	return err
+	//}
+	//if course == nil {
+	//	return fmt.Errorf("课程不存在")
+	//}
+	//if course.Chooses == course.Capsize {
+	//	return fmt.Errorf("课程已满")
+	//}
+
+	// 开始 MySQL 事务
+	tx := sms.mysqlDao.DB.Begin()
+	if tx.Error != nil {
+		return fmt.Errorf("开启 MySQL 事务失败：%w", tx.Error)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			// 发生 panic 时回滚事务
+			tx.Rollback()
+			log.Printf("事务已回滚：%v", r)
+		}
+	}()
+
+	if err = sms.mysqlDao.ChooseCourse(studentCourse); err != nil {
+		tx.Rollback()
+		return err
+	}
+	if err = sms.mysqlDao.UpdateCourseForChoose(studentCourse.CourseID); err != nil {
+		tx.Rollback()
+		return err
+	}
+	if err = tx.Commit().Error; err != nil {
+		return fmt.Errorf("提交事务失败：%w", err)
+	}
+	return nil
+}

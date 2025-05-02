@@ -11,10 +11,11 @@ import (
 
 // StudentCommand 定义 Node 日志条目的结构
 type StudentCommand struct {
-	Operation   string         `json:"operation"`
-	Student     *model.Student `json:"student,omitempty"`
-	Id          string         `json:"id"`
-	ExamineSize int            `json:"examine_size"`
+	Operation         string         `json:"operation"`
+	Student           *model.Student `json:"student,omitempty"`
+	Id                string         `json:"id"`
+	ExamineSize       int            `json:"examine_size"`
+	LeaderPortAddress string
 }
 
 // StudentFSM 实现 raft.FSM 接口
@@ -47,6 +48,9 @@ func (fsm *StudentFSM) Apply(log *raft.Log) interface{} {
 		return nil
 	case "periodicDelete":
 		fsm.service.PeriodicDeleteInternal(cmd.ExamineSize)
+		return nil
+	case "changeLeaderPortAddr":
+		fsm.service.ChangeLeaderPortAddressInternal(cmd.LeaderPortAddress)
 		return nil
 	default:
 		return fmt.Errorf("fsm.Apply unknown operation: %s", cmd.Operation)

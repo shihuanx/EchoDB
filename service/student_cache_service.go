@@ -109,3 +109,11 @@ func (scs *StudentCacheService) ReLoadCacheData(students []*model.Student) error
 func (scs *StudentCacheService) GetAllStudentsFromCache() ([]*model.Student, error) {
 	return scs.cacheDao.GetAllStudents()
 }
+
+func (scs *StudentCacheService) AddCourseRemains(id int, remains int) error {
+	return scs.cacheDao.AddCourseRemains(id, remains)
+}
+
+func (scs *StudentCacheService) GetCourseRemainsAndUpdate(id int) error {
+	return scs.cacheDao.GetCourseRemainsAndUpdate(id)
+}

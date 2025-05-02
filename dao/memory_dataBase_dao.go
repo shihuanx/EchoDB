@@ -15,11 +15,12 @@ var Expiration = time.Hour
 type MemoryDBDao struct {
 	dataMap    map[string]interface{}
 	expires    map[string]time.Time
-	rwLock     sync.RWMutex
 	capacity   int                      // 最大内存容量（键值对数量）
 	lruList    *list.List               // 双向链表，用于实现 LRU 内存淘汰
 	lruMap     map[string]*list.Element //键和链表元素的映射map
 	evictRatio float64                  // 淘汰比例
+	rwLocks    sync.Map
+	rwLock     sync.RWMutex
 }
 
 // NewMemoryDBDao 初始化内存数据库实例
@@ -35,16 +36,28 @@ func NewMemoryDBDao(cfg config.MemoryDBConfig) *MemoryDBDao {
 	return mdb
 }
 
+func (mdb *MemoryDBDao) getRWLock(key string) *sync.RWMutex {
+	lock, loaded := mdb.rwLocks.Load(key)
+	if !loaded {
+		newLock := &sync.RWMutex{}
+		lock, _ = mdb.rwLocks.LoadOrStore(key, newLock)
+	}
+	return lock.(*sync.RWMutex)
+}
+
 // Set 设置键值对并设置过期时间
 func (mdb *MemoryDBDao) Set(key string, value interface{}, expiration int64) {
 	nanoseconds := expiration * int64(time.Second)
 	duration := time.Duration(nanoseconds)
-	mdb.rwLock.Lock()
-	defer mdb.rwLock.Unlock()
+	rwLock := mdb.getRWLock(key)
+	rwLock.Lock()
+	defer rwLock.Unlock()
 
 	//只在添加键时断内存满没满 满了就执行内存淘汰 再添加键 其余操作只把键添加到链表头 然后淘汰从链表尾选取一部分淘汰
 	if len(mdb.dataMap) >= mdb.capacity {
+		mdb.rwLock.Lock()
 		mdb.evict()
+		mdb.rwLock.Unlock()
 	}
 	element := mdb.lruList.PushFront(key)
 	mdb.lruMap[key] = element
@@ -62,8 +75,9 @@ func (mdb *MemoryDBDao) Set(key string, value interface{}, expiration int64) {
 
 // Get 获取键对应的值
 func (mdb *MemoryDBDao) Get(key string) (interface{}, bool) {
-	mdb.rwLock.RLock()
-	defer mdb.rwLock.RUnlock()
+	rwLock := mdb.getRWLock(key)
+	rwLock.RLock()
+	defer rwLock.RUnlock()
 	// 先判断过期时间是否存在 如果存在 那键肯定存在 再判断是否过期就行了
 	expire, exists := mdb.expires[key]
 	if exists {
@@ -89,8 +103,9 @@ func (mdb *MemoryDBDao) Get(key string) (interface{}, bool) {
 
 // Update 更新键对应的值
 func (mdb *MemoryDBDao) Update(key string, value interface{}) bool {
-	mdb.rwLock.Lock()
-	defer mdb.rwLock.Unlock()
+	rwLock := mdb.getRWLock(key)
+	rwLock.Lock()
+	defer rwLock.Unlock()
 	//先判断过期时间是否存在 如果存在 那键肯定存在 再判断是否过期 不过期就更新
 	expire, exists := mdb.expires[key]
 	if exists {
@@ -121,8 +136,9 @@ func (mdb *MemoryDBDao) Update(key string, value interface{}) bool {
 
 // Delete 删除指定键
 func (mdb *MemoryDBDao) Delete(key string) {
-	mdb.rwLock.Lock()
-	defer mdb.rwLock.Unlock()
+	rwLock := mdb.getRWLock(key)
+	rwLock.Lock()
+	defer rwLock.Unlock()
 	mdb.deleteKey(key)
 	log.Printf("删除键: %s", key)
 }

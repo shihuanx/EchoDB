@@ -1,6 +1,7 @@
 package dao
 
 import (
+	"errors"
 	"fmt"
 	"gorm.io/gorm"
 	"memoryDataBase/model"
@@ -178,4 +179,52 @@ func (d *StudentMysqlDao) GetHotStudentCounts() ([]*model.StudentCount, error) {
 		return nil, fmt.Errorf("StudentMysqlDao.GetHotStudentCounts err:%w", err)
 	}
 	return counts, nil
+}
+
+func (d *StudentMysqlDao) AddCourse(course *model.Course) error {
+	result := d.DB.Create(&course)
+	if result.Error != nil {
+		return fmt.Errorf("StudentMysqlDao.AddCourse err:%w", result.Error)
+	}
+	return nil
+}
+
+func (d *StudentMysqlDao) GetAllCourse() ([]*model.Course, error) {
+	var courses []*model.Course
+	result := d.DB.Find(&courses)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("StudentMysqlDao.GetAllCourse err:%w", result.Error)
+	}
+	return courses, nil
+}
+
+func (d *StudentMysqlDao) GetCourse(id int) (*model.Course, error) {
+	var course *model.Course
+	result := d.DB.Where("id = ?", id).First(&course)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("StudentMysqlDao.GetCourse err:%w", result.Error)
+	}
+	return course, nil
+}
+
+func (d *StudentMysqlDao) ChooseCourse(studentCourse *model.StudentCourse) error {
+	result := d.DB.Create(&studentCourse)
+	if result.Error != nil {
+		return fmt.Errorf("StudentMysqlDao.ChooseCourse err:%w", result.Error)
+	}
+	return nil
+}
+
+func (d *StudentMysqlDao) UpdateCourseForChoose(id int) error {
+	result := d.DB.Model(&model.Course{}).Where("id = ?", id).Update("chooses", gorm.Expr("chooses + ?", 1))
+	if result.Error != nil {
+		return fmt.Errorf("StudentMysqlDao.UpdateCourseForChoose err:%w", result.Error)
+	}
+	return nil
 }
