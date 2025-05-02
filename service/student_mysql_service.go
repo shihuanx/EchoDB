@@ -277,15 +277,15 @@ func (sms *StudentMysqlService) ChooseCourse(studentCourse *model.StudentCourse)
 		}
 	}()
 
-	if err = sms.mysqlDao.ChooseCourse(studentCourse); err != nil {
+	if err := sms.mysqlDao.ChooseCourse(studentCourse); err != nil {
 		tx.Rollback()
 		return err
 	}
-	if err = sms.mysqlDao.UpdateCourseForChoose(studentCourse.CourseID); err != nil {
+	if err := sms.mysqlDao.UpdateCourseForChoose(studentCourse.CourseID); err != nil {
 		tx.Rollback()
 		return err
 	}
-	if err = tx.Commit().Error; err != nil {
+	if err := tx.Commit().Error; err != nil {
 		return fmt.Errorf("提交事务失败：%w", err)
 	}
 	return nil
